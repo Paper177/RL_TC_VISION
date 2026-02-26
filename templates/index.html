@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RL Training Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.2.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .sidebar {
+            width: 300px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            height: 90vh;
+            overflow-y: auto;
+        }
+        .main-content {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            height: 90vh;
+            overflow-y: auto;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+        select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .episode-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .episode-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .episode-item:hover {
+            background-color: #f0f7ff;
+        }
+        .episode-item.active {
+            background-color: #e6f3ff;
+            border-left: 4px solid #007bff;
+        }
+        .chart-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .chart-container {
+            background: #fff;
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+        .chart-canvas-wrapper {
+            flex: 1;
+            min-height: 0;
+        }
+        .y-axis-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+        }
+        .y-axis-controls label {
+            color: #666;
+        }
+        .y-axis-controls input {
+            width: 60px;
+            padding: 4px 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .y-axis-controls button {
+            padding: 4px 10px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .y-axis-controls button:hover {
+            background: #0056b3;
+        }
+        .y-axis-controls button.reset-btn {
+            background: #6c757d;
+        }
+        .y-axis-controls button.reset-btn:hover {
+            background: #545b62;
+        }
+        .stats-panel {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .stat-card {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h3>Select Training Run</h3>
+            <select id="folderSelect" onchange="loadEpisodes()">
+                <option value="">Loading folders...</option>
+            </select>
+            
+            <h3>Episodes</h3>
+            <div id="episodeList" class="episode-list">
+                <div style="text-align: center; color: #999; padding: 20px;">Select a folder first</div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div id="dashboard" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2 id="episodeTitle">Episode Data</h2>
+                    <span id="episodeId" style="color: #666;"></span>
+                </div>
+                
+                <div class="stats-panel">
+                    <div class="stat-card">
+                        <div class="stat-value" id="totalReward">-</div>
+                        <div class="stat-label">Total Reward</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="avgSpeed">-</div>
+                        <div class="stat-label">Avg Speed (km/h)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="maxSlip">-</div>
+                        <div class="stat-label">Max Slip Ratio</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stepsCount">-</div>
+                        <div class="stat-label">Steps</div>
+                    </div>
+                </div>
+
+                <div class="chart-grid">
+                    <div class="chart-container">
+                        <div class="chart-canvas-wrapper">
+                            <canvas id="torqueChart"></canvas>
+                        </div>
+                        <div class="y-axis-controls" data-chart="torqueChart">
+                            <label>Y轴:</label>
+                            <label>Min:</label>
+                            <input type="number" id="torqueChart_yMin" step="10">
+                            <label>Max:</label>
+                            <input type="number" id="torqueChart_yMax" step="10">
+                            <button onclick="applyYAxis('torqueChart')">应用</button>
+                            <button class="reset-btn" onclick="resetYAxis('torqueChart')">重置</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-canvas-wrapper">
+                            <canvas id="slipChart"></canvas>
+                        </div>
+                        <div class="y-axis-controls" data-chart="slipChart">
+                            <label>Y轴:</label>
+                            <label>Min:</label>
+                            <input type="number" id="slipChart_yMin" step="0.01">
+                            <label>Max:</label>
+                            <input type="number" id="slipChart_yMax" step="0.01">
+                            <button onclick="applyYAxis('slipChart')">应用</button>
+                            <button class="reset-btn" onclick="resetYAxis('slipChart')">重置</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-canvas-wrapper">
+                            <canvas id="speedChart"></canvas>
+                        </div>
+                        <div class="y-axis-controls" data-chart="speedChart">
+                            <label>Y轴:</label>
+                            <label>Min:</label>
+                            <input type="number" id="speedChart_yMin" step="5">
+                            <label>Max:</label>
+                            <input type="number" id="speedChart_yMax" step="5">
+                            <button onclick="applyYAxis('speedChart')">应用</button>
+                            <button class="reset-btn" onclick="resetYAxis('speedChart')">重置</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-canvas-wrapper">
+                            <canvas id="rewardChart"></canvas>
+                        </div>
+                        <div class="y-axis-controls" data-chart="rewardChart">
+                            <label>Y轴:</label>
+                            <label>Min:</label>
+                            <input type="number" id="rewardChart_yMin" step="0.01">
+                            <label>Max:</label>
+                            <input type="number" id="rewardChart_yMax" step="0.01">
+                            <button onclick="applyYAxis('rewardChart')">应用</button>
+                            <button class="reset-btn" onclick="resetYAxis('rewardChart')">重置</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-canvas-wrapper">
+                            <canvas id="criticLossChart"></canvas>
+                        </div>
+                        <div class="y-axis-controls" data-chart="criticLossChart">
+                            <label>Y轴:</label>
+                            <label>Min:</label>
+                            <input type="number" id="criticLossChart_yMin" step="0.1">
+                            <label>Max:</label>
+                            <input type="number" id="criticLossChart_yMax" step="0.1">
+                            <button onclick="applyYAxis('criticLossChart')">应用</button>
+                            <button class="reset-btn" onclick="resetYAxis('criticLossChart')">重置</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <div class="chart-canvas-wrapper">
+                            <canvas id="actorLossChart"></canvas>
+                        </div>
+                        <div class="y-axis-controls" data-chart="actorLossChart">
+                            <label>Y轴:</label>
+                            <label>Min:</label>
+                            <input type="number" id="actorLossChart_yMin" step="0.1">
+                            <label>Max:</label>
+                            <input type="number" id="actorLossChart_yMax" step="0.1">
+                            <button onclick="applyYAxis('actorLossChart')">应用</button>
+                            <button class="reset-btn" onclick="resetYAxis('actorLossChart')">重置</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="placeholder" style="text-align: center; color: #999; padding-top: 100px;">
+                <h2>Select an episode to view details</h2>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let charts = {};
+        let currentFolder = '';
+        let currentEpisode = '';
+        let autoRefreshInterval = null;
+
+        // Load folders on startup
+        fetch('/api/folders')
+            .then(response => response.json())
+            .then(folders => {
+                const select = document.getElementById('folderSelect');
+                select.innerHTML = '<option value="">Select a folder...</option>';
+                folders.forEach(folder => {
+                    const option = document.createElement('option');
+                    option.value = folder;
+                    option.textContent = folder;
+                    select.appendChild(option);
+                });
+                
+                // 默认选择最新的文件夹
+                if (folders.length > 0) {
+                    select.value = folders[0];
+                    loadEpisodes(true); // true 表示自动选择最新的episode
+                }
+                
+                // 启动自动刷新
+                startAutoRefresh();
+            });
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+            autoRefreshInterval = setInterval(() => {
+                const folder = document.getElementById('folderSelect').value;
+                if (folder) {
+                    refreshEpisodes(folder);
+                }
+            }, 5000); // 每5秒刷新一次
+        }
+
+        function refreshEpisodes(folder) {
+            fetch(`/api/episodes/${folder}`)
+                .then(response => response.json())
+                .then(episodes => {
+                    // 倒序排列
+                    episodes.sort((a, b) => b.id - a.id);
+                    
+                    const list = document.getElementById('episodeList');
+                    // 检查是否有新数据
+                    if (list.children.length !== episodes.length) {
+                        renderEpisodeList(episodes, folder);
+                        
+                        // 如果当前没有选中的episode，或者选中的是旧的最新，自动更新
+                        if (!currentEpisode && episodes.length > 0) {
+                            loadEpisodeData(folder, episodes[0].filename, list.firstChild);
+                        }
+                    }
+                });
+        }
+
+        // 键盘导航支持
+        document.addEventListener('keydown', function(event) {
+            if (!currentEpisode) return;
+            
+            const list = document.getElementById('episodeList');
+            const items = Array.from(list.children);
+            const currentIndex = items.findIndex(item => item.classList.contains('active'));
+            
+            if (currentIndex === -1) return;
+            
+            let nextIndex = -1;
+            
+            // ArrowRight / ArrowUp: 新的 Episode (列表上方)
+            if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+                nextIndex = currentIndex - 1;
+            } 
+            // ArrowLeft / ArrowDown: 旧的 Episode (列表下方)
+            else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+                nextIndex = currentIndex + 1;
+            }
+            
+            if (nextIndex >= 0 && nextIndex < items.length) {
+                // 模拟点击
+                items[nextIndex].click();
+                // 滚动到可见区域
+                items[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        });
+
+        function loadEpisodes(autoSelectLatest = false) {
+            const folder = document.getElementById('folderSelect').value;
+            if (!folder) return;
+            currentFolder = folder;
+
+            fetch(`/api/episodes/${folder}`)
+                .then(response => response.json())
+                .then(episodes => {
+                    // 倒序排列
+                    episodes.sort((a, b) => b.id - a.id);
+                    renderEpisodeList(episodes, folder);
+                    
+                    if (autoSelectLatest && episodes.length > 0) {
+                        const firstItem = document.getElementById('episodeList').firstChild;
+                        loadEpisodeData(folder, episodes[0].filename, firstItem);
+                    }
+                });
+        }
+
+        function renderEpisodeList(episodes, folder) {
+            const list = document.getElementById('episodeList');
+            list.innerHTML = '';
+            episodes.forEach(ep => {
+                const div = document.createElement('div');
+                div.className = 'episode-item';
+                if (currentEpisode === ep.filename) {
+                    div.classList.add('active');
+                }
+                div.textContent = `Episode ${ep.id}`;
+                div.onclick = () => loadEpisodeData(folder, ep.filename, div);
+                list.appendChild(div);
+            });
+        }
+
+        function loadEpisodeData(folder, filename, element) {
+            currentEpisode = filename;
+            
+            // Update active state
+            document.querySelectorAll('.episode-item').forEach(el => el.classList.remove('active'));
+            if (element) element.classList.add('active');
+
+            fetch(`/api/data/${folder}/${filename}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('dashboard').style.display = 'block';
+                    document.getElementById('placeholder').style.display = 'none';
+                    
+                    updateStats(data);
+                    updateCharts(data);
+                });
+        }
+
+        function updateStats(data) {
+            document.getElementById('episodeTitle').textContent = `Episode ${data.episode}`;
+            document.getElementById('totalReward').textContent = data.total_reward.toFixed(2);
+            
+            const avgSpeed = data.velocity ? (data.velocity.reduce((a, b) => a + b, 0) / data.velocity.length).toFixed(1) : '-';
+            document.getElementById('avgSpeed').textContent = avgSpeed;
+            
+            const slips = [...(data.S_L1 || []), ...(data.S_R1 || []), ...(data.S_L2 || []), ...(data.S_R2 || [])];
+            const maxSlip = slips.length ? Math.max(...slips).toFixed(3) : '-';
+            document.getElementById('maxSlip').textContent = maxSlip;
+            
+            document.getElementById('stepsCount').textContent = data.num_steps;
+        }
+
+        function createChart(ctx, label, datasets, yLabel, yAxisRange = {}, annotations = {}) {
+            const chartId = ctx.canvas.id;
+            if (charts[chartId]) {
+                charts[chartId].destroy();
+            }
+
+            // 使用用户自定义的 Y 轴范围（如果有）
+            const finalYAxisRange = getYAxisRange(chartId, yAxisRange);
+
+            charts[chartId] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: datasets[0].data.length}, (_, i) => i),
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: label
+                        },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'x',
+                            }
+                        },
+                        annotation: annotations
+                    },
+                    scales: {
+                        y: {
+                            title: {
+                                display: true,
+                                text: yLabel
+                            },
+                            min: finalYAxisRange.min,
+                            max: finalYAxisRange.max
+                        }
+                    },
+                    elements: {
+                        point: {
+                            radius: 0 // Hide points for cleaner look
+                        },
+                        line: {
+                            borderWidth: 1.5
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCharts(data) {
+            // Torque Chart
+            createChart(
+                document.getElementById('torqueChart').getContext('2d'),
+                'Wheel Torques',
+                [
+                    { label: 'FL', data: data.T_L1, borderColor: '#ff6384', backgroundColor: '#ff6384' },
+                    { label: 'FR', data: data.T_R1, borderColor: '#36a2eb', backgroundColor: '#36a2eb' },
+                    { label: 'RL', data: data.T_L2, borderColor: '#ffce56', backgroundColor: '#ffce56' },
+                    { label: 'RR', data: data.T_R2, borderColor: '#4bc0c0', backgroundColor: '#4bc0c0' }
+                ],
+                'Torque (Nm)'
+            );
+
+            // Slip Chart with target_slip_ratio
+            const slipAnnotations = data.target_slip ? {
+                annotations: {
+                    targetSlip: {
+                        type: 'line',
+                        yMin: data.target_slip[0],
+                        yMax: data.target_slip[0],
+                        borderColor: 'rgba(255, 99, 132, 0.7)',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        label: {
+                            display: true,
+                            content: 'Target Slip',
+                            position: 'end'
+                        }
+                    }
+                }
+            } : {};
+            
+            createChart(
+                document.getElementById('slipChart').getContext('2d'),
+                'Slip Ratios',
+                [
+                    { label: 'FL', data: data.S_L1, borderColor: '#ff6384' },
+                    { label: 'FR', data: data.S_R1, borderColor: '#36a2eb' },
+                    { label: 'RL', data: data.S_L2, borderColor: '#ffce56' },
+                    { label: 'RR', data: data.S_R2, borderColor: '#4bc0c0' }
+                ],
+                'Slip Ratio',
+                { min: -0.05, max: 0.15 },
+                slipAnnotations
+            );
+
+            // Speed Chart
+            createChart(
+                document.getElementById('speedChart').getContext('2d'),
+                'Vehicle Speed',
+                [
+                    { label: 'Speed', data: data.velocity, borderColor: '#36a2eb', fill: true, backgroundColor: 'rgba(54, 162, 235, 0.1)' }
+                ],
+                'Speed (km/h)'
+            );
+
+            // Reward Chart - show all reward details
+            const rewardDatasets = [];
+            const rewardColors = [
+                '#4bc0c0', '#ff6384', '#36a2eb', '#ffce56',
+                '#9966ff', '#ff9f40', '#4bc0c0', '#c9cbcf',
+                '#7bc225', '#e74c3c', '#9b59b6', '#1abc9c'
+            ];
+            let colorIndex = 0;
+
+            // Add all R_* reward details
+            for (const key in data) {
+                if (key.startsWith('R_')) {
+                    const rewardData = data[key].slice(0, -1);
+                    rewardDatasets.push({
+                        label: key,
+                        data: rewardData,
+                        borderColor: rewardColors[colorIndex % rewardColors.length],
+                        backgroundColor: rewardColors[colorIndex % rewardColors.length],
+                        fill: false
+                    });
+                    colorIndex++;
+                }
+            }
+
+            // Add total reward
+            const totalRewardData = data.r_total.slice(0, -1);
+            rewardDatasets.push({
+                label: 'Total Reward',
+                data: totalRewardData,
+                borderColor: '#000000',
+                backgroundColor: '#000000',
+                fill: false,
+                borderWidth: 2
+            });
+
+            const rewardLabels = Array.from({length: totalRewardData.length}, (_, i) => i);
+            
+            if (charts['rewardChart']) {
+                charts['rewardChart'].destroy();
+            }
+
+            // 使用用户自定义的 Y 轴范围（如果有）
+            const rewardYAxisRange = getYAxisRange('rewardChart', {});
+
+            charts['rewardChart'] = new Chart(document.getElementById('rewardChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: rewardLabels,
+                    datasets: rewardDatasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Reward Details (Last Step Excluded)'
+                        },
+                        legend: {
+                            display: true,
+                            position: 'bottom'
+                        },
+                        zoom: {
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                            },
+                            zoom: {
+                                wheel: {
+                                    enabled: true,
+                                },
+                                pinch: {
+                                    enabled: true
+                                },
+                                mode: 'x',
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Reward'
+                            },
+                            min: rewardYAxisRange.min,
+                            max: rewardYAxisRange.max
+                        }
+                    },
+                    elements: {
+                        point: {
+                            radius: 0
+                        },
+                        line: {
+                            borderWidth: 1.5
+                        }
+                    }
+                }
+            });
+
+            // Critic Loss Chart
+            if (data.training_c_loss && data.training_c_loss.length > 0) {
+                createChart(
+                    document.getElementById('criticLossChart').getContext('2d'),
+                    'Critic Loss (This Episode)',
+                    [
+                        { label: 'Critic Loss', data: data.training_c_loss, borderColor: '#ff6384', backgroundColor: 'rgba(255, 99, 132, 0.1)', fill: false }
+                    ],
+                    'Loss Value'
+                );
+            }
+
+            // Actor Loss Chart
+            if (data.training_a_loss && data.training_a_loss.length > 0) {
+                // Filter out 0.0 values (delayed updates) by replacing them with null
+                const actorLossData = data.training_a_loss.map(v => v === 0 ? null : v);
+                
+                createChart(
+                    document.getElementById('actorLossChart').getContext('2d'),
+                    'Actor Loss (This Episode)',
+                    [
+                        { 
+                            label: 'Actor Loss', 
+                            data: actorLossData, 
+                            borderColor: '#36a2eb', 
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)', 
+                            fill: false,
+                            spanGaps: true 
+                        }
+                    ],
+                    'Loss Value'
+                );
+            }
+
+            // 更新所有 Y 轴输入框显示
+            updateAllYAxisInputs();
+        }
+
+        // Y轴调整功能
+        const defaultYAxisRanges = {
+            torqueChart: { min: undefined, max: undefined },
+            slipChart: { min: -0.05, max: 0.15 },
+            speedChart: { min: undefined, max: undefined },
+            rewardChart: { min: undefined, max: undefined },
+            criticLossChart: { min: undefined, max: undefined },
+            actorLossChart: { min: undefined, max: undefined }
+        };
+
+        // 用户自定义的 Y 轴范围（切换 episode 时保持）
+        const customYAxisRanges = {};
+
+        function applyYAxis(chartId) {
+            const minInput = document.getElementById(`${chartId}_yMin`);
+            const maxInput = document.getElementById(`${chartId}_yMax`);
+            const chart = charts[chartId];
+            
+            if (!chart) return;
+            
+            const minVal = minInput.value !== '' ? parseFloat(minInput.value) : undefined;
+            const maxVal = maxInput.value !== '' ? parseFloat(maxInput.value) : undefined;
+            
+            // 保存用户设置
+            customYAxisRanges[chartId] = { min: minVal, max: maxVal };
+            
+            chart.options.scales.y.min = minVal;
+            chart.options.scales.y.max = maxVal;
+            chart.update();
+        }
+
+        function resetYAxis(chartId) {
+            const minInput = document.getElementById(`${chartId}_yMin`);
+            const maxInput = document.getElementById(`${chartId}_yMax`);
+            const chart = charts[chartId];
+            
+            if (!chart) return;
+            
+            // 清除用户设置
+            delete customYAxisRanges[chartId];
+            
+            const defaultRange = defaultYAxisRanges[chartId] || { min: undefined, max: undefined };
+            
+            minInput.value = '';
+            maxInput.value = '';
+            
+            chart.options.scales.y.min = defaultRange.min;
+            chart.options.scales.y.max = defaultRange.max;
+            chart.update();
+        }
+
+        // 获取 Y 轴范围（优先使用用户设置）
+        function getYAxisRange(chartId, defaultRange) {
+            if (customYAxisRanges[chartId]) {
+                return customYAxisRanges[chartId];
+            }
+            return defaultRange || defaultYAxisRanges[chartId] || { min: undefined, max: undefined };
+        }
+
+        // 更新输入框显示当前 Y 轴配置
+        function updateYAxisInputs(chartId) {
+            const minInput = document.getElementById(`${chartId}_yMin`);
+            const maxInput = document.getElementById(`${chartId}_yMax`);
+            
+            if (!minInput || !maxInput) return;
+            
+            const range = customYAxisRanges[chartId];
+            if (range) {
+                minInput.value = range.min !== undefined ? range.min : '';
+                maxInput.value = range.max !== undefined ? range.max : '';
+            } else {
+                minInput.value = '';
+                maxInput.value = '';
+            }
+        }
+
+        // 更新所有图表的 Y 轴输入框
+        function updateAllYAxisInputs() {
+            ['torqueChart', 'slipChart', 'speedChart', 'rewardChart', 'criticLossChart', 'actorLossChart'].forEach(updateYAxisInputs);
+        }
+    </script>
+</body>
+</html>
