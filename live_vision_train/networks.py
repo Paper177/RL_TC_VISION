@@ -1,3 +1,31 @@
+"""
+多模态视觉 TD3 网络结构 (live_vision_train)
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ VisionEncoder                                                                 │
+│   Input: image (B, 3, H, W)                                                   │
+│   Conv2d 3→32 → Conv2d 32→64 → Conv2d 64→128 → Conv2d 128→64 (stride=2, ReLU) │
+│   → AdaptiveAvgPool2d(2,2) → Flatten → Linear(256→64) → LayerNorm → tanh      │
+│   Output: (B, 64)                                                             │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│ VisionActorNetwork                                                            │
+│   physics (B, 8)  ──→ Linear(8→64) + LayerNorm + ReLU ──┐                     │
+│   image (B,3,H,W) ──→ VisionEncoder ──→ (B, 64) ────────┼→ Concat (B, 128)    │
+│                                                                               │
+│   → Linear(128→256) + LN + ReLU → Linear(256→128) + LN + ReLU                 │
+│   → Linear(128→4) → sigmoid × action_bound  →  action (B, 4)                  │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│ VisionCriticNetwork                                                                     │
+│   physics||action (B, 12) ──→ Linear(12→64) + LayerNorm + ReLU ──┐                      │
+│   image (B,3,H,W) ──→ VisionEncoder ──→ (B, 64) ─────────────────┼→ Concat(B, 128)      │
+│                                                                                         │
+│   → Linear(128→256) + LN + ReLU → Linear(256→128) + LN + ReLU → Linear→1 → Q(B, 1)      │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

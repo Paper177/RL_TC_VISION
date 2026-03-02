@@ -64,63 +64,6 @@ def save_episode_data(episode_num, history, reward, info, save_dir):
     with open(save_path, 'w', encoding='utf-8') as f:
         json.dump(episode_data, f, indent=2, ensure_ascii=False)
 
-
-def log_episode_visuals(writer, episode_num, history, save_dir=None, reward=None):
-    plt.close('all')
-    gc.collect()
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    fig.suptitle(f'Episode {episode_num} | Reward: {reward:.1f}', fontsize=16)
-
-    steps = range(len(history['velocity']))
-
-    ax = axes[0, 0]
-    for key, label in [('T_L1', 'FL'), ('T_R1', 'FR'), ('T_L2', 'RL'), ('T_R2', 'RR')]:
-        ax.plot(steps, history[key], label=label, alpha=0.8, linewidth=1)
-    ax.set_title('Wheel Torques (Nm)')
-    ax.legend(loc='upper right', fontsize='small')
-    ax.grid(True, alpha=0.3)
-
-    ax = axes[0, 1]
-    window = 10
-    for key, label in [('S_L1', 'FL'), ('S_R1', 'FR'), ('S_L2', 'RL'), ('S_R2', 'RR')]:
-        data = history[key]
-        smoothed = [np.mean(data[max(0, i - window // 2):i + window // 2 + 1])
-                    for i in range(len(data))]
-        ax.plot(steps, smoothed, label=label, alpha=0.8, linewidth=1.5)
-    if history.get('target_slip'):
-        ax.axhline(y=history['target_slip'][0], color='r', linestyle='--',
-                    alpha=0.5, label='Target')
-    ax.set_title('Slip Ratios (Smoothed)')
-    ax.set_ylim(-0.05, 0.2)
-    ax.legend(loc='upper right', fontsize='small')
-    ax.grid(True, alpha=0.3)
-
-    ax = axes[1, 0]
-    ax.plot(steps, history['velocity'], 'b-', linewidth=2)
-    ax.set_title('Vehicle Velocity (km/h)')
-    ax.set_ylim(0, 100)
-    ax.set_xlabel('Step')
-    ax.grid(True, alpha=0.3)
-
-    ax = axes[1, 1]
-    ax.plot(steps, history['r_total'], 'k-', label='Total', linewidth=2, alpha=0.9)
-    for key in history:
-        if key.startswith('R_') and len(history[key]) == len(list(steps)):
-            ax.plot(steps, history[key], label=key[2:], linestyle='--', alpha=0.7)
-    ax.set_title('Reward Composition')
-    ax.set_xlabel('Step')
-    ax.set_ylim(-0.05, 0.1)
-    ax.legend(loc='lower left', fontsize='x-small', ncol=2)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    if save_dir:
-        fig_dir = os.path.join(save_dir, "episode_plots")
-        os.makedirs(fig_dir, exist_ok=True)
-        plt.savefig(os.path.join(fig_dir, f'ep_{episode_num}_{reward:.0f}.png'))
-    plt.close(fig)
-
-
 def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -158,10 +101,10 @@ def train_td3_vision(
         'gamma': 0.99,
         'Actor LR': 3e-4,
         'Critic LR': 3e-4,
-        'Buffer Capacity': 300000,
+        'Buffer Capacity': 2000000,
         'Batch Size': 128,
         'Elite Ratio': 0.3,
-        'Elite Capacity': 100000,
+        'Elite Capacity': 300000,
         'Noise Scale': 0.15,
         'Min Noise': 0.02,
         'Noise Decay': 0.995,
@@ -249,15 +192,26 @@ def train_td3_vision(
     # 学习率衰减
     lr_decay_patience = 5
     lr_decay_factor = 0.5
-    lr_min = 1e-6
+    lr_min = 3e-6
     recent_rewards = []
     no_improvement_count = 0
     last_best_reward = -float('inf')
 
     # 加载预训练模型
+    is_pretrained = False
     if pretrained_model_path and os.path.exists(pretrained_model_path):
+        is_pretrained = True
         print(f"[Train] Loading pretrained: {pretrained_model_path}")
         agent.load_model(pretrained_model_path)
+
+        # 尝试加载 Buffer
+        buffer_path = pretrained_model_path.replace('.pt', '_buffer.pkl')
+        if os.path.exists(buffer_path):
+            print(f"[Train] Loading buffer: {buffer_path}")
+            agent.load_buffer(buffer_path)
+        else:
+            print(f"[Train] Buffer not found: {buffer_path}, starting with empty buffer")
+
         try:
             filename = os.path.basename(pretrained_model_path)
             parts = filename.replace('.pt', '').split('_')
@@ -270,6 +224,12 @@ def train_td3_vision(
         except Exception as e:
             print(f"[Train] Could not parse filename, using defaults: {e}")
             noise_scale = 0.1
+
+        warmup_episodes = 0
+
+        lrs = agent.get_learning_rates()
+        print(f"[Train] Pretrained model loaded, skipping warmup")
+        print(f"[Train] LR → Actor: {lrs['actor_lr']:.2e}, Critic: {lrs['critic_lr']:.2e}")
     else:
         print("[Train] Training from scratch")
 
@@ -365,7 +325,7 @@ def train_td3_vision(
             print(f"\033[93m{'='*60}\033[0m")
 
             # ---- 训练 ----
-            c_loss, a_loss = 0.0, 0.0
+            avg_c_loss, avg_a_loss = 0.0, 0.0
             if episode < start_episode + warmup_episodes:
                 print(f"[Warmup] Episode {episode}, skip training "
                       f"(Buffer: {len(agent.buffer)})")
@@ -378,17 +338,30 @@ def train_td3_vision(
                 train_steps = max(100, min(base_steps, 20000))
 
                 print(f"[Train] {train_steps} steps...")
+                sum_c_loss, sum_a_loss = 0.0, 0.0
+                actor_update_count = 0
                 pbar = tqdm(range(train_steps),
                             desc=f"Training EP {episode}", unit="step", leave=False)
                 for _ in pbar:
                     c_loss, a_loss, c_grad, a_grad = agent.train_step()
-                    pbar.set_postfix({'C': f'{c_loss:.4f}', 'A': f'{a_loss:.4f}'})
+                    sum_c_loss += c_loss
+                    if a_loss != 0.0:
+                        sum_a_loss += a_loss
+                        actor_update_count += 1
+                    pbar.set_postfix({
+                        'C': f'{c_loss:.4f}',
+                        'A': f'{a_loss:.4f}',
+                        'A_avg': f'{sum_a_loss / max(1, actor_update_count):.4f}'
+                    })
+
+                avg_c_loss = sum_c_loss / train_steps
+                avg_a_loss = sum_a_loss / max(1, actor_update_count)
 
             # ---- Logging ----
             save_episode_data(episode, hist, episode_reward, final_info, log_path)
 
-            writer.add_scalar('Loss/Critic', c_loss, episode)
-            writer.add_scalar('Loss/Actor', a_loss, episode)
+            writer.add_scalar('Loss/Critic', avg_c_loss, episode)
+            writer.add_scalar('Loss/Actor', avg_a_loss, episode)
             writer.add_scalar('Train/Reward', episode_reward, episode)
             writer.add_scalar('Train/Noise', noise_scale, episode)
             writer.add_scalar('Train/Final_Speed_kmh', final_speed, episode)
@@ -459,7 +432,7 @@ def train_td3_vision(
         print("\n===== Training interrupted =====")
         ckpt_path = os.path.join(
             checkpoint_dir,
-            f"checkpoint_KeyboardInterrupt_{episode}.pt")
+            f"checkpoint_KeyboardInterrupt_{episode}_{episode_reward:.0f}.pt")
         agent.save_model(ckpt_path)
 
         buffer_path = ckpt_path.replace('.pt', '_buffer.pkl')
