@@ -173,7 +173,6 @@ def train_td3_vision(
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # log_path 必须用绝对路径, 因为后面 os.chdir 会切换工作目录
     log_path = os.path.abspath(os.path.join(log_dir, f"TD3_Vision_{current_time}"))
     os.makedirs(log_path, exist_ok=True)
     writer = SummaryWriter(log_dir=log_path)

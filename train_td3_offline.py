@@ -125,9 +125,6 @@ def train_td3_offline(
             if (step + 1) % save_interval == 0:
                 save_path = os.path.join(checkpoint_save_dir, f"offline_checkpoint_{step+1}.pt")
                 agent.save_model(save_path)
-                # 注意：离线训练通常不需要重复保存 Buffer，因为 Buffer 内容没变
-                # 但为了方便后续继续训练，可以选择保存（如果需要更新 Buffer 统计信息等，但这里 Buffer 是静态的）
-                # 这里只保存模型权重
                 
     except KeyboardInterrupt:
         print("Training interrupted by user.")
