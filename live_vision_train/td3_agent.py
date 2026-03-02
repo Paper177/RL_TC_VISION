@@ -265,7 +265,7 @@ class VisionTD3Agent:
             'critic_lr': self.critic_1_opt.param_groups[0]['lr']
         }
 
-    # ---- 模型持久化 ----
+    # ---- 模型保存 ----
     def save_model(self, filepath: str):
         torch.save({
             'actor': self.actor.state_dict(),
