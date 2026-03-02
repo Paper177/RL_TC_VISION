@@ -1,5 +1,10 @@
+__pycache__/
 logs_TD3
 logs_TD3_Vision
+logs_TD3_Offline
+logs_TD3_Vision
+logs_TD3_Test
+live_vision_train\best_model_save
 logs_Live
 best_model_save
 checkpoints

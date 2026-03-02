@@ -99,3 +99,24 @@ class ReplayBuffer:
         清空缓冲区中的所有经验
         """
         self.buffer.clear()
+
+    def save(self, filepath: str) -> None:
+        """
+        保存缓冲区到文件
+        """
+        import pickle
+        with open(filepath, 'wb') as f:
+            pickle.dump(list(self.buffer), f)
+    
+    def load(self, filepath: str) -> None:
+        """
+        从文件加载缓冲区
+        """
+        import pickle
+        try:
+            with open(filepath, 'rb') as f:
+                data = pickle.load(f)
+                self.buffer = deque(data, maxlen=self.capacity)
+            print(f"成功加载 Buffer: {len(self.buffer)} 条经验")
+        except Exception as e:
+            print(f"加载 Buffer 失败: {e}")

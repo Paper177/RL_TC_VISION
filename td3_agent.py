@@ -10,7 +10,7 @@ import torch.nn as nn
 import copy
 from typing import Tuple
 from collections import deque
-
+import os
 from networks import ActorNetwork, CriticNetwork
 from replay_buffer import ReplayBuffer
 
@@ -195,30 +195,34 @@ class TD3Agent:
         
         critic_loss = (critic_1_loss.item() + critic_2_loss.item()) / 2
         critic_grad = (critic_1_grad.item() + critic_2_grad.item()) / 2
-        
+
+        # 软更新Critic目标网络 (每步都更新，符合TD3原论文)
+        self.soft_update(self.critic_1, self.critic_1_target)
+        self.soft_update(self.critic_2, self.critic_2_target)
+
         # ----------------------------
         # 3. 延迟策略更新 (每隔policy_freq步更新一次Actor)
         # ----------------------------
         actor_loss = 0.0
         actor_grad = 0.0
-        
+
         if self.total_it % self.policy_freq == 0:
-            # Actor目标：最大化Critic_1的Q值
+            # Actor目标：最大化min(Q1, Q2)，使用双Critic最小值更稳健
             actor_actions = self.actor(states_tensor)
-            actor_loss_val = -self.critic_1(states_tensor, actor_actions).mean()
-            
+            q1 = self.critic_1(states_tensor, actor_actions)
+            q2 = self.critic_2(states_tensor, actor_actions)
+            actor_loss_val = -torch.min(q1, q2).mean()
+
             self.actor_opt.zero_grad()
             actor_loss_val.backward()
             actor_grad = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
             self.actor_opt.step()
-            
+
             actor_loss = actor_loss_val.item()
-            
-            # 软更新目标网络
+
+            # 软更新Actor目标网络 (仅在Actor更新时)
             self.soft_update(self.actor, self.actor_target)
-            self.soft_update(self.critic_1, self.critic_1_target)
-            self.soft_update(self.critic_2, self.critic_2_target)
-        
+
         return critic_loss, actor_loss, critic_grad, actor_grad
     
     def decay_learning_rate(self, factor: float = 0.5, min_lr: float = 1e-6):
@@ -273,3 +277,21 @@ class TD3Agent:
         self.critic_1_opt.load_state_dict(checkpoint['critic_1_opt'])
         self.critic_2_opt.load_state_dict(checkpoint['critic_2_opt'])
         self.total_it = checkpoint.get('total_it', 0)
+
+    def save_buffer(self, filepath: str):
+        """保存经验回放缓冲区"""
+        self.buffer.save(filepath)
+        # 保存 elite buffer，文件名加后缀 _elite
+        elite_path = filepath.replace('.pkl', '_elite.pkl')
+        self.elite_buffer.save(elite_path)
+        
+    def load_buffer(self, filepath: str):
+        """加载经验回放缓冲区"""
+        self.buffer.load(filepath)
+        # 加载 elite buffer
+        elite_path = filepath.replace('.pkl', '_elite.pkl')
+        if os.path.exists(elite_path):
+            print(f"发现 Elite Buffer 文件: {elite_path}，正在加载...")
+            self.elite_buffer.load(elite_path)
+        else:
+            print(f"未找到 Elite Buffer 文件: {elite_path}")

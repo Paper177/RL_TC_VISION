@@ -58,6 +58,26 @@ def get_episode_data(folder, filename):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """处理文件上传并返回解析后的数据"""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    if file and file.filename.endswith('.json'):
+        try:
+            content = file.read().decode('utf-8')
+            data = json.loads(content)
+            return jsonify(data)
+        except Exception as e:
+            return jsonify({"error": f"Error parsing file: {str(e)}"}), 500
+    else:
+        return jsonify({"error": "Invalid file type. Please upload a JSON file."}), 400
+
 if __name__ == '__main__':
     print(f"Starting server... Access http://localhost:5000 or http://<your-ip>:5000")
     app.run(debug=True, host='0.0.0.0', port=5000)

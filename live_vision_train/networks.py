@@ -2,76 +2,118 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def weight_init(m):
-    if isinstance(m, nn.Linear):
-        # 使用更保守的初始化
-        nn.init.orthogonal_(m.weight, gain=1.0)
-        if m.bias is not None:
-            nn.init.constant_(m.bias, 0.0)
 
-class PolicyNet(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim, action_bound):
+class VisionEncoder(nn.Module):
+    """
+    轻量级CNN视觉编码器，从道路图像中提取路面特征。
+    使用 AdaptiveAvgPool2d 适配任意输入分辨率。
+    使用 LayerNorm 替代 BatchNorm，兼容 RL 中 batch_size=1 的推理场景。
+    """
+    def __init__(self, img_channels=3, output_dim=64):
         super().__init__()
-        
-        self.fc1 = nn.Linear(state_dim, 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 128)
-        
-        self.out = nn.Linear(128, action_dim)    
+        self.convs = nn.Sequential(
+            nn.Conv2d(img_channels, 32, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((2, 2)),
+        )
+        self.fc = nn.Linear(64 * 2 * 2, output_dim)
+        self.ln = nn.LayerNorm(output_dim)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=1.0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        x = self.convs(x)
+        x = x.view(x.size(0), -1)
+        x = torch.tanh(self.ln(self.fc(x)))
+        return x
+
+
+class VisionActorNetwork(nn.Module):
+    """
+    多模态 Actor 网络 (双分支架构)
+      - 视觉分支: VisionEncoder 处理道路图像
+      - 物理分支: MLP 处理车辆动力学状态
+      - 融合层: 合并两分支特征输出控制动作
+    """
+    def __init__(self, physics_dim, action_dim, action_bound=1.0,
+                 vision_feat_dim=64, hidden_dim=256, img_channels=3):
+        super().__init__()
         self.action_bound = action_bound
-        
-        # 输出层使用更小的初始化
+
+        self.vision_encoder = VisionEncoder(img_channels, vision_feat_dim)
+
+        self.phys_fc = nn.Linear(physics_dim, 64)
+        self.phys_ln = nn.LayerNorm(64)
+
+        fusion_dim = vision_feat_dim + 64
+        self.fc1 = nn.Linear(fusion_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.ln2 = nn.LayerNorm(hidden_dim // 2)
+        self.out = nn.Linear(hidden_dim // 2, action_dim)
+
         nn.init.uniform_(self.out.weight, -3e-3, 3e-3)
         nn.init.uniform_(self.out.bias, -3e-3, 3e-3)
-        
-        self.apply(weight_init)
-    
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        
+
+    def forward(self, physics_state, image):
+        vis_feat = self.vision_encoder(image)
+        phys_feat = F.relu(self.phys_ln(self.phys_fc(physics_state)))
+
+        x = torch.cat([vis_feat, phys_feat], dim=1)
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = F.relu(self.ln2(self.fc2(x)))
         return torch.sigmoid(self.out(x)) * self.action_bound
 
-class QValueNet(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim):
+
+class VisionCriticNetwork(nn.Module):
+    """
+    多模态 Critic 网络 (双分支架构)
+      - 视觉分支: VisionEncoder 处理道路图像
+      - 物理+动作分支: MLP 处理车辆状态和控制动作
+      - 融合层: 合并后输出 Q 值
+    """
+    def __init__(self, physics_dim, action_dim, vision_feat_dim=64,
+                 hidden_dim=256, img_channels=3):
         super().__init__()
-        
-        self.input_dim = state_dim + action_dim
-        
-        self.fc1 = nn.Linear(self.input_dim, 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 128)
-        
-        self.out = nn.Linear(128, 1)
-        
-        # 输出层使用更小的初始化
+
+        self.vision_encoder = VisionEncoder(img_channels, vision_feat_dim)
+
+        self.phys_act_fc = nn.Linear(physics_dim + action_dim, 64)
+        self.phys_act_ln = nn.LayerNorm(64)
+
+        fusion_dim = vision_feat_dim + 64
+        self.fc1 = nn.Linear(fusion_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.ln2 = nn.LayerNorm(hidden_dim // 2)
+        self.out = nn.Linear(hidden_dim // 2, 1)
+
         nn.init.uniform_(self.out.weight, -3e-3, 3e-3)
         nn.init.uniform_(self.out.bias, -3e-3, 3e-3)
-        
-        self.apply(weight_init)
-    
-    def forward(self, state, action):
-        x = torch.cat([state, action], dim=1)
-        
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        
+
+    def forward(self, physics_state, action, image):
+        vis_feat = self.vision_encoder(image)
+        phys_act = torch.cat([physics_state, action], dim=1)
+        phys_act_feat = F.relu(self.phys_act_ln(self.phys_act_fc(phys_act)))
+
+        x = torch.cat([vis_feat, phys_act_feat], dim=1)
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = F.relu(self.ln2(self.fc2(x)))
         return self.out(x)
-
-class CriticNetwork(nn.Module):
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
-        super().__init__()
-        self.q_network = QValueNet(state_dim, action_dim, hidden_dim)
-    
-    def forward(self, state, action):
-        return self.q_network(state, action)
-
-class ActorNetwork(nn.Module):
-    def __init__(self, state_dim, hidden_dim, action_dim, action_bound):
-        super().__init__()
-        self.policy_network = PolicyNet(state_dim, hidden_dim, action_dim, action_bound)
-    
-    def forward(self, state):
-        return self.policy_network(state)

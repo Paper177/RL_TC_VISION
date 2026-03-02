@@ -183,9 +183,9 @@ def train_td3_Live(
         'Action Bound': 1.0,   
         'Hidden Dim': 256,
         'gamma': 0.99,
-        'Actor LR': 3e-4,
-        'Critic LR': 3e-4,
-        'Buffer Capacity': 1500000,
+        'Actor LR': 2e-4,
+        'Critic LR': 2e-4,
+        'Buffer Capacity': 3000000,
         'Batch Size': 512,
         'Elite Ratio': 0.3,    
         'Elite Capacity': 1000000,
@@ -262,9 +262,14 @@ def train_td3_Live(
     # Warm-up 设置
     warmup_episodes = 5 # 前 5 个 Episode 进行随机探索，不训练
     
+    # 如果已经加载了 Buffer 且数据量足够，则跳过 Warm-up
+    if len(agent.buffer) > hyperparams['Batch Size']:
+        print(f"Buffer 已加载 {len(agent.buffer)} 条数据，跳过 Warm-up")
+        warmup_episodes = -1
+    
     # 学习率衰减设置
     lr_decay_patience = 5  # 多少个episode没有进步就衰减学习率
-    lr_decay_factor = 0.8  # 衰减因子
+    lr_decay_factor = 1  # 衰减因子
     lr_min = 1e-4  # 最小学习率
     recent_rewards = []  # 记录最近的奖励
     no_improvement_count = 0  # 没有进步的计数器
@@ -273,6 +278,14 @@ def train_td3_Live(
     if pretrained_model_path and os.path.exists(pretrained_model_path):
         print(f"加载预训练模型: {pretrained_model_path}")
         agent.load_model(pretrained_model_path)
+        
+        # 尝试加载对应的 Buffer
+        buffer_path = pretrained_model_path.replace('.pt', '_buffer.pkl')
+        if os.path.exists(buffer_path):
+            print(f"发现 Buffer 文件: {buffer_path}，正在加载...")
+            agent.load_buffer(buffer_path)
+        else:
+            print(f"未找到 Buffer 文件: {buffer_path}，将使用空 Buffer 开始")
         
         try:
             filename = os.path.basename(pretrained_model_path)
@@ -285,6 +298,12 @@ def train_td3_Live(
             print(f"恢复训练: Episode {start_episode}, Best Reward {best_episode_reward}")
             
             noise_scale = max(min_noise, hyperparams['Noise Scale'] * (noise_decay ** start_episode))
+            
+            # 再次检查 Buffer 状态，如果加载了 Buffer，确保跳过 Warm-up
+            if len(agent.buffer) > hyperparams['Batch Size']:
+                print(f"Buffer 已加载 {len(agent.buffer)} 条数据，跳过 Warm-up")
+                warmup_episodes = -1
+                
         except Exception as e:
             print(f"无法从文件名解析信息，使用默认设置: {e}")
             noise_scale = 0.1 
@@ -320,10 +339,8 @@ def train_td3_Live(
             final_info = {}
             
             while True:
-                # Warm-up 阶段使用随机动作
                 if episode < start_episode + warmup_episodes:
-                    #action = np.random.uniform(-1, 1, size=env.get_action_dim())
-                    action = agent.select_action(state, noise_scale=noise_scale)
+                    action = np.random.uniform(0.0, 1.0, size=env.get_action_dim())
                 else:
                     action = agent.select_action(state, noise_scale=noise_scale)
 
@@ -469,9 +486,16 @@ def train_td3_Live(
             if episodes_completed >= checkpoint_interval:
                 checkpoint_path = os.path.join(checkpoint_save_dir, f"checkpoint_{episode}_{episode_reward:.0f}.pt")
                 agent.save_model(checkpoint_path)
+                
+                # 保存 Buffer
+                buffer_path = checkpoint_path.replace('.pt', '_buffer.pkl')
+                print(f"正在保存 Buffer 到: {buffer_path} ...")
+                agent.save_buffer(buffer_path)
+                
                 print(f"\n{'='*60}")
                 print(f"[CHECKPOINT] 已完成 {episodes_completed} 个episode，保存模型并退出")
                 print(f"[CHECKPOINT] 模型已保存到: {checkpoint_path}")
+                print(f"[CHECKPOINT] Buffer 已保存到: {buffer_path}")
                 print(f"[CHECKPOINT] 请重新运行程序继续训练，使用参数:")
                 print(f"[CHECKPOINT]   python train_td3_Live_auto_restart.py --model \"{checkpoint_path}\"")
                 print(f"{'='*60}\n")
@@ -482,7 +506,14 @@ def train_td3_Live(
         print("=====停止训练=====")
         checkpoint_path = os.path.join(checkpoint_save_dir, f"checkpoint_KeyboardInterrupt_{episode}.pt")
         agent.save_model(checkpoint_path)
+        
+        # 保存 Buffer
+        buffer_path = checkpoint_path.replace('.pt', '_buffer.pkl')
+        print(f"正在保存 Buffer 到: {buffer_path} ...")
+        agent.save_buffer(buffer_path)
+        
         print(f"[CHECKPOINT] 模型已保存到: {checkpoint_path}")
+        print(f"[CHECKPOINT] Buffer 已保存到: {buffer_path}")
     except Exception as e:
         import traceback
         traceback.print_exc()
