@@ -77,7 +77,7 @@ def setup_seed(seed):
 
 def train_td3_vision(
     max_episodes: int = 10000,
-    max_torque: float = 500.0,
+    max_torque: float = 1000.0,
     target_slip_ratio: float = 0.08,
     log_dir: str = "logs_TD3_Vision",
     pretrained_model_path: str = None,
@@ -102,7 +102,7 @@ def train_td3_vision(
         'Actor LR': 3e-4,
         'Critic LR': 3e-4,
         'Buffer Capacity': 2000000,
-        'Batch Size': 128,
+        'Batch Size': 256,
         'Elite Ratio': 0.3,
         'Elite Capacity': 300000,
         'Noise Scale': 0.15,
@@ -177,8 +177,11 @@ def train_td3_vision(
         policy_freq=hyperparams['Policy Freq'],
         elite_ratio=hyperparams['Elite Ratio'],
         device=device,
+        use_amp=True,
     )
 
+    if device == "cuda":
+        print(f"[Train] AMP (混合精度): 已开启 | Batch size: {hyperparams['Batch Size']} (可适当增大以提高 GPU 利用率)")
     agent.noise.theta = 0.3
     agent.noise.sigma = 0.15
 
@@ -190,7 +193,7 @@ def train_td3_vision(
     warmup_episodes = 5
 
     # 学习率衰减
-    lr_decay_patience = 5
+    lr_decay_patience = 10
     lr_decay_factor = 0.5
     lr_min = 3e-6
     recent_rewards = []
@@ -233,6 +236,7 @@ def train_td3_vision(
     else:
         print("[Train] Training from scratch")
 
+    # ================= 仿真训练开始 =================
     print(f"\n{'='*60}")
     print(f"  TD3 Vision Training (auto-restart every {checkpoint_interval} eps)")
     print(f"  Buffer memory: ~{agent.buffer.get_memory_mb():.0f} MB (normal) "
@@ -320,7 +324,7 @@ def train_td3_vision(
             final_speed = final_info.get('vx', 0.0)
             ts = datetime.now().strftime("%H:%M:%S")
             print(f"\033[93m{'='*60}\033[0m")
-            print(f"\033[93m[{ts}] EP {episode} | Reward: {episode_reward:.0f} "
+            print(f"\033[93m[{ts}] EP {episode} | Reward: {episode_reward:.2f} "
                   f"| Speed: {final_speed:.1f} km/h | Buffer: {len(agent.buffer)}\033[0m")
             print(f"\033[93m{'='*60}\033[0m")
 
@@ -457,7 +461,7 @@ if __name__ == "__main__":
         description='TD3 Vision Training (End-to-End, Auto-Restart)')
     parser.add_argument('--model', type=str, default=None,
                         help='Path to pretrained model checkpoint')
-    parser.add_argument('--checkpoint_interval', type=int, default=200,
+    parser.add_argument('--checkpoint_interval', type=int, default=50,
                         help='Episodes before auto-save and exit')
     args = parser.parse_args()
 

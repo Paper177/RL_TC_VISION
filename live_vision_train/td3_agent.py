@@ -68,7 +68,8 @@ class VisionTD3Agent:
         noise_clip: float = 0.5,
         policy_freq: int = 2,
         elite_ratio: float = 0.3,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        use_amp: bool = True,
     ):
         self.physics_dim = physics_dim
         self.action_dim = action_dim
@@ -83,6 +84,10 @@ class VisionTD3Agent:
         self.device = device
         self.elite_ratio = elite_ratio
         self.total_it = 0
+        self.use_amp = use_amp and (device != "cpu")
+        self._scaler = torch.amp.GradScaler("cuda") if self.use_amp else None
+        if self.device == "cuda":
+            torch.backends.cudnn.benchmark = True
 
         # --- Actor ---
         self.actor = VisionActorNetwork(
@@ -192,39 +197,59 @@ class VisionTD3Agent:
 
         phys, imgs, acts, rews, next_phys, next_imgs, dones = batch
 
-        phys_t = torch.as_tensor(phys, dtype=torch.float32, device=self.device)
-        imgs_t = torch.as_tensor(imgs, dtype=torch.float32, device=self.device) / 255.0
-        acts_t = torch.as_tensor(acts, dtype=torch.float32, device=self.device)
-        rews_t = torch.as_tensor(rews, dtype=torch.float32, device=self.device).unsqueeze(-1)
-        next_phys_t = torch.as_tensor(next_phys, dtype=torch.float32, device=self.device)
-        next_imgs_t = torch.as_tensor(next_imgs, dtype=torch.float32, device=self.device) / 255.0
-        dones_t = torch.as_tensor(dones, dtype=torch.float32, device=self.device).unsqueeze(-1)
+        def _to_device(x, dtype=torch.float32):
+            t = torch.from_numpy(np.asarray(x)).to(dtype)
+            return t.to(self.device, non_blocking=True)
+
+        phys_t = _to_device(phys)
+        imgs_t = _to_device(imgs) / 255.0
+        acts_t = _to_device(acts)
+        rews_t = _to_device(rews).unsqueeze(-1)
+        next_phys_t = _to_device(next_phys)
+        next_imgs_t = _to_device(next_imgs) / 255.0
+        dones_t = _to_device(dones).unsqueeze(-1)
+
+        mse = nn.MSELoss()
+        autocast_ctx = torch.amp.autocast("cuda", enabled=self.use_amp)
 
         # ---- Critic 更新 (每步) ----
-        with torch.no_grad():
+        with torch.no_grad(), autocast_ctx:
             noise = (torch.randn_like(acts_t) * self.policy_noise).clamp(
                 -self.noise_clip, self.noise_clip)
             next_actions = (self.actor_target(next_phys_t, next_imgs_t) + noise).clamp(
                 0.0, self.action_bound)
-
             target_q1 = self.critic_1_target(next_phys_t, next_actions, next_imgs_t)
             target_q2 = self.critic_2_target(next_phys_t, next_actions, next_imgs_t)
             target_q = torch.min(target_q1, target_q2)
             td_target = rews_t + self.gamma * (1 - dones_t) * target_q
 
-        current_q1 = self.critic_1(phys_t, acts_t, imgs_t)
-        critic_1_loss = nn.MSELoss()(current_q1, td_target)
-        self.critic_1_opt.zero_grad()
-        critic_1_loss.backward()
-        c1_grad = torch.nn.utils.clip_grad_norm_(self.critic_1.parameters(), 1.0)
-        self.critic_1_opt.step()
+        self.critic_1_opt.zero_grad(set_to_none=True)
+        with autocast_ctx:
+            current_q1 = self.critic_1(phys_t, acts_t, imgs_t)
+            critic_1_loss = mse(current_q1, td_target)
+        if self._scaler is not None:
+            self._scaler.scale(critic_1_loss).backward()
+            self._scaler.unscale_(self.critic_1_opt)
+            c1_grad = torch.nn.utils.clip_grad_norm_(self.critic_1.parameters(), 1.0)
+            self._scaler.step(self.critic_1_opt)
+        else:
+            critic_1_loss.backward()
+            c1_grad = torch.nn.utils.clip_grad_norm_(self.critic_1.parameters(), 1.0)
+            self.critic_1_opt.step()
 
-        current_q2 = self.critic_2(phys_t, acts_t, imgs_t)
-        critic_2_loss = nn.MSELoss()(current_q2, td_target)
-        self.critic_2_opt.zero_grad()
-        critic_2_loss.backward()
-        c2_grad = torch.nn.utils.clip_grad_norm_(self.critic_2.parameters(), 1.0)
-        self.critic_2_opt.step()
+        self.critic_2_opt.zero_grad(set_to_none=True)
+        with autocast_ctx:
+            current_q2 = self.critic_2(phys_t, acts_t, imgs_t)
+            critic_2_loss = mse(current_q2, td_target)
+        if self._scaler is not None:
+            self._scaler.scale(critic_2_loss).backward()
+            self._scaler.unscale_(self.critic_2_opt)
+            c2_grad = torch.nn.utils.clip_grad_norm_(self.critic_2.parameters(), 1.0)
+            self._scaler.step(self.critic_2_opt)
+        else:
+            critic_2_loss.backward()
+            c2_grad = torch.nn.utils.clip_grad_norm_(self.critic_2.parameters(), 1.0)
+            self.critic_2_opt.step()
 
         critic_loss = (critic_1_loss.item() + critic_2_loss.item()) / 2
         critic_grad = (c1_grad.item() + c2_grad.item()) / 2
@@ -232,23 +257,30 @@ class VisionTD3Agent:
         self.soft_update(self.critic_1, self.critic_1_target)
         self.soft_update(self.critic_2, self.critic_2_target)
 
-        # ---- Actor 延迟更新 ----
         actor_loss = 0.0
         actor_grad = 0.0
 
         if self.total_it % self.policy_freq == 0:
-            actor_actions = self.actor(phys_t, imgs_t)
-            q1 = self.critic_1(phys_t, actor_actions, imgs_t)
-            q2 = self.critic_2(phys_t, actor_actions, imgs_t)
-            actor_loss_val = -torch.min(q1, q2).mean()
-
-            self.actor_opt.zero_grad()
-            actor_loss_val.backward()
-            actor_grad = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
-            self.actor_opt.step()
-
+            self.actor_opt.zero_grad(set_to_none=True)
+            with autocast_ctx:
+                actor_actions = self.actor(phys_t, imgs_t)
+                q1 = self.critic_1(phys_t, actor_actions, imgs_t)
+                q2 = self.critic_2(phys_t, actor_actions, imgs_t)
+                actor_loss_val = -torch.min(q1, q2).mean()
+            if self._scaler is not None:
+                self._scaler.scale(actor_loss_val).backward()
+                self._scaler.unscale_(self.actor_opt)
+                actor_grad = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
+                self._scaler.step(self.actor_opt)
+            else:
+                actor_loss_val.backward()
+                actor_grad = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
+                self.actor_opt.step()
             actor_loss = actor_loss_val.item()
             self.soft_update(self.actor, self.actor_target)
+
+        if self._scaler is not None:
+            self._scaler.update()
 
         return critic_loss, actor_loss, critic_grad, actor_grad
 

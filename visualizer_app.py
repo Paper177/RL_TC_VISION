@@ -6,7 +6,7 @@ import glob
 app = Flask(__name__)
 
 # 配置日志根目录
-LOG_ROOT = r"e:\CarSim2024.1_Prog\Database\RL_VISION\RL_TC_VISION\logs_TD3"
+LOG_ROOT = r"e:\CarSim2024.1_Prog\Database\RL_VISION\RL_TC_VISION\logs_TD3_Vision"
 
 @app.route('/')
 def index():

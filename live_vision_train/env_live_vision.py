@@ -39,7 +39,7 @@ class LiveCarsimEnv:
         max_torque: float = 1000.0,
         target_slip_ratio: float = 0.06,
         reward_weights: dict = None,
-        frame_skip: int = 1,
+        frame_skip: int = 5,
     ):
         self.simfile_path = simfile_path
         self.vs_dll_path = vs_dll_path
@@ -150,6 +150,7 @@ class LiveCarsimEnv:
 
         self.import_array = [target_torque[i] for i in range(4)]
 
+        #控制步减少
         for _ in range(self.frame_skip):
             self.t_current = (self.configuration.get('t_start')
                               + (self.current_step + 1) * self.t_step)
@@ -219,9 +220,11 @@ class LiveCarsimEnv:
 
                 h, w = frame.shape[:2]
                 
+                roi_x_start = int(w * 0.2)
+                roi_x_end = int(w * 0.8)
                 roi_y_start = int(h * 0.65)
                 roi_y_end = int(h * 0.85)
-                roi_frame = frame[roi_y_start:roi_y_end, 0:w]
+                roi_frame = frame[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
 
                 roi_resized = cv2.resize(roi_frame,
                                          (self.IMG_WIDTH, self.IMG_HEIGHT))
@@ -230,7 +233,7 @@ class LiveCarsimEnv:
                 image = np.transpose(roi_rgb, (2, 0, 1)).copy()
 
                 if display and info:
-                    self._draw_hud(frame, roi_y_start, roi_y_end, w,
+                    self._draw_hud(frame, roi_x_start, roi_x_end, roi_y_start, roi_y_end,
                                    info, reward, step)
         except Exception as e:
             print(f"[Env] Vision error: {e}")
@@ -239,10 +242,10 @@ class LiveCarsimEnv:
 
         return image
 
-    def _draw_hud(self, frame, roi_y_start, roi_y_end, w,
+    def _draw_hud(self, frame, roi_x_start, roi_x_end, roi_y_start, roi_y_end,
                   info, reward, step):
         """在原始帧上绘制 HUD 信息并显示"""
-        cv2.rectangle(frame, (0, roi_y_start), (w - 1, roi_y_end - 1),
+        cv2.rectangle(frame, (roi_x_start, roi_y_start), (roi_x_end - 1, roi_y_end - 1),
                       (0, 255, 0), 2)
         cv2.putText(frame, "ROI", (5, roi_y_start + 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -294,8 +297,7 @@ class LiveCarsimEnv:
         v_R2_c = (vx_ms + avz * 0.5 * self.veh_br) * np.cos(steer) * 3.6
 
         def calc_slip(v_w, v_c):
-            denom = max(abs(v_w), abs(v_c), 0.1)
-            return (v_w - v_c) / denom if max(abs(v_w), abs(v_c)) > 3.0 else 0.0
+            return (v_w - v_c) / max(abs(v_w), abs(v_c), 0.1) if max(abs(v_w), abs(v_c)) > 3.0 else 0.0
 
         s_L1 = calc_slip(v_L1, v_L1_c)
         s_R1 = calc_slip(v_R1, v_R1_c)
@@ -375,7 +377,9 @@ class LiveCarsimEnv:
     def get_img_shape(self):
         return self.img_shape
 
-
+    # ================================================================
+    # 环境配置测试主函数
+    # ================================================================
 if __name__ == "__main__":
     env = LiveCarsimEnv()
     try:
