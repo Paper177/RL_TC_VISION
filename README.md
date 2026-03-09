@@ -30,10 +30,10 @@
 
 ```bash
 # 从零开始
-python train_td3_Live_auto_restart.py
+python train_td3_Live_checkpoint.py
 
 # 断点续训（每 N 个 episode 自动保存并退出，需手动重新运行）
-python train_td3_Live_auto_restart.py --model "checkpoints/checkpoint_xxx.pt" --checkpoint_interval 200
+python train_td3_Live_checkpoint.py --model "checkpoints/checkpoint_xxx.pt" --checkpoint_interval 200
 ```
 
 **在线训练（带视觉）**
