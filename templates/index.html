@@ -163,7 +163,7 @@
             <select id="folderSelect" onchange="loadEpisodes()">
                 <option value="">Loading folders...</option>
             </select>
-            
+
             <h3>Episodes</h3>
             <div id="episodeList" class="episode-list">
                 <div style="text-align: center; color: #999; padding: 20px;">Select a folder first</div>
@@ -294,6 +294,28 @@
         let currentFolder = '';
         let currentEpisode = '';
         let autoRefreshInterval = null;
+
+        // 键盘状态追踪
+        let shiftPressed = false;
+        let ctrlPressed = false;
+
+        // 监听键盘事件
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Shift') shiftPressed = true;
+            if (event.key === 'Control') ctrlPressed = true;
+        });
+
+        document.addEventListener('keyup', function(event) {
+            if (event.key === 'Shift') shiftPressed = false;
+            if (event.key === 'Control') ctrlPressed = false;
+        });
+
+        // 获取当前缩放模式（根据键盘状态）
+        function getZoomMode() {
+            if (shiftPressed) return 'y';      // Shift: 缩放 Y 轴
+            if (ctrlPressed) return 'x';       // Ctrl: 缩放 X 轴
+            return 'xy';                      // 默认: 缩放 XY 轴
+        }
 
         // Load folders on startup
         fetch('/api/folders')
@@ -515,7 +537,7 @@
                         zoom: {
                             pan: {
                                 enabled: true,
-                                mode: 'x',
+                                mode: function() { return getZoomMode(); },
                             },
                             zoom: {
                                 wheel: {
@@ -524,7 +546,7 @@
                                 pinch: {
                                     enabled: true
                                 },
-                                mode: 'x',
+                                mode: function() { return getZoomMode(); },
                             }
                         },
                         annotation: annotations
@@ -677,7 +699,7 @@
                         zoom: {
                             pan: {
                                 enabled: true,
-                                mode: 'x',
+                                mode: function() { return getZoomMode(); },
                             },
                             zoom: {
                                 wheel: {
@@ -686,7 +708,7 @@
                                 pinch: {
                                     enabled: true
                                 },
-                                mode: 'x',
+                                mode: function() { return getZoomMode(); },
                             }
                         }
                     },

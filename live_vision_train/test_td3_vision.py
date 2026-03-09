@@ -118,7 +118,7 @@ def plot_test_episode(episode_num, history, reward, save_dir):
 def test_td3_vision(
     model_path: str,
     num_episodes: int = 1,
-    max_torque: float = 500.0,
+    max_torque: float = 1000.0,
     target_slip_ratio: float = 0.08,
     log_dir: str = "logs_TD3_Vision_Test",
 ):
@@ -156,7 +156,7 @@ def test_td3_vision(
         max_torque=max_torque,
         target_slip_ratio=target_slip_ratio,
         reward_weights=reward_weights,
-        frame_skip=1,
+        frame_skip=5,
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

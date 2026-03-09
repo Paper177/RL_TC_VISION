@@ -101,7 +101,7 @@ def train_td3_vision(
         'gamma': 0.99,
         'Actor LR': 3e-4,
         'Critic LR': 3e-4,
-        'Buffer Capacity': 2000000,
+        'Buffer Capacity': 800000,
         'Batch Size': 256,
         'Elite Ratio': 0.3,
         'Elite Capacity': 300000,
@@ -262,6 +262,7 @@ def train_td3_vision(
                 'T_L1': [], 'T_R1': [], 'T_L2': [], 'T_R2': [],
                 'S_L1': [], 'S_R1': [], 'S_L2': [], 'S_R2': [],
                 'velocity': [], 'r_total': [], 'target_slip': [],
+                'training_c_loss': [], 'training_a_loss': [],
             }
             final_info = {}
 
@@ -349,6 +350,9 @@ def train_td3_vision(
                 for _ in pbar:
                     c_loss, a_loss, c_grad, a_grad = agent.train_step()
                     sum_c_loss += c_loss
+                    # 记录每个 step 的 loss
+                    hist['training_c_loss'].append(c_loss)
+                    hist['training_a_loss'].append(a_loss)
                     if a_loss != 0.0:
                         sum_a_loss += a_loss
                         actor_update_count += 1

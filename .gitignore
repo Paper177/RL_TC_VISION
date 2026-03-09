@@ -4,7 +4,9 @@ logs_TD3_Vision
 logs_TD3_Offline
 logs_TD3_Vision
 logs_TD3_Test
+logs_TD3_Vision_Test
 live_vision_train\best_model_save
+live_vision_train\checkpoints
 logs_Live
 best_model_save
 checkpoints

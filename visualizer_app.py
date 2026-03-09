@@ -2,11 +2,71 @@ from flask import Flask, render_template, jsonify, request, send_from_directory
 import os
 import json
 import glob
+import subprocess
+import atexit
+import time
 
 app = Flask(__name__)
 
 # 配置日志根目录
 LOG_ROOT = r"e:\CarSim2024.1_Prog\Database\RL_VISION\RL_TC_VISION\logs_TD3_Vision"
+
+# TensorBoard 进程
+tensorboard_process = None
+
+def start_tensorboard():
+    """启动 TensorBoard 服务"""
+    global tensorboard_process
+    log_dir = "logs_TD3_Vision"
+
+    # 检查端口 6006 是否已被占用
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('localhost', 6006))
+        sock.close()
+    except socket.error:
+        print("[TensorBoard] 端口 6006 已被占用，TensorBoard 可能已在运行")
+        return None
+
+    try:
+        # 启动 TensorBoard
+        cmd = ['tensorboard', '--logdir=' + log_dir, '--port=6006', '--bind_all']
+        tensorboard_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        print(f"[TensorBoard] 启动中... 日志目录: {log_dir}")
+        time.sleep(2)  # 等待 TensorBoard 启动
+
+        if tensorboard_process.poll() is None:
+            print("[TensorBoard] 启动成功! 访问 http://localhost:6006")
+        else:
+            stdout, stderr = tensorboard_process.communicate()
+            print(f"[TensorBoard] 启动失败: {stderr.decode()}")
+            tensorboard_process = None
+
+        return tensorboard_process
+    except Exception as e:
+        print(f"[TensorBoard] 启动错误: {e}")
+        return None
+
+def stop_tensorboard():
+    """关闭 TensorBoard 服务"""
+    global tensorboard_process
+    if tensorboard_process:
+        print("\n[TensorBoard] 正在关闭...")
+        tensorboard_process.terminate()
+        try:
+            tensorboard_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            tensorboard_process.kill()
+        print("[TensorBoard] 已关闭")
+
+# 注册退出时关闭 TensorBoard
+atexit.register(stop_tensorboard)
 
 @app.route('/')
 def index():
@@ -79,5 +139,9 @@ def upload_file():
         return jsonify({"error": "Invalid file type. Please upload a JSON file."}), 400
 
 if __name__ == '__main__':
+    # 自动启动 TensorBoard
+    start_tensorboard()
+
     print(f"Starting server... Access http://localhost:5000 or http://<your-ip>:5000")
+    print(f"TensorBoard: http://localhost:6006")
     app.run(debug=True, host='0.0.0.0', port=5000)
