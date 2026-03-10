@@ -81,8 +81,9 @@ def train_td3_vision(
     target_slip_ratio: float = 0.08,
     log_dir: str = "logs_TD3_Vision",
     pretrained_model_path: str = None,
-    checkpoint_interval: int = 300,
+    checkpoint_interval: int = 100, #一次训练保存100个episode
 ):
+    #奖励函数权重
     reward_weights = {
         'w_speed': 0.00,
         'w_accel': 0.15,
@@ -93,7 +94,7 @@ def train_td3_vision(
         'w_smooth': -0.00,
         'w_yaw': -2.0,
     }
-
+    #模型超参数
     hyperparams = {
         'Action Bound': 1.0,
         'Hidden Dim': 256,
@@ -113,9 +114,9 @@ def train_td3_vision(
         'Policy Freq': 2,
     }
 
+    #日志路径
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-
     log_path = os.path.abspath(os.path.join(log_dir, f"TD3_Vision_{current_time}"))
     os.makedirs(log_path, exist_ok=True)
     writer = SummaryWriter(log_dir=log_path)
@@ -144,7 +145,7 @@ def train_td3_vision(
         print(f"[Error] simfile.sim not found: {SIMFILE_PATH}")
         return
 
-    # ---- 创建环境 ----
+    # ------------------ 创建环境 ------------------
     env = LiveCarsimEnv(
         simfile_path=SIMFILE_PATH,
         vs_dll_path=VS_DLL_PATH,
@@ -158,7 +159,7 @@ def train_td3_vision(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[Train] Device: {device}")
 
-    # ---- 创建智能体 ----
+    # ------------------ 创建智能体 ------------------
     agent = VisionTD3Agent(
         physics_dim=env.get_physics_dim(),
         action_dim=env.get_action_dim(),
@@ -177,11 +178,9 @@ def train_td3_vision(
         policy_freq=hyperparams['Policy Freq'],
         elite_ratio=hyperparams['Elite Ratio'],
         device=device,
-        use_amp=True,
+        use_amp=True,   #混合精度
     )
 
-    if device == "cuda":
-        print(f"[Train] AMP (混合精度): 已开启 | Batch size: {hyperparams['Batch Size']} (可适当增大以提高 GPU 利用率)")
     agent.noise.theta = 0.3
     agent.noise.sigma = 0.15
 
@@ -200,7 +199,7 @@ def train_td3_vision(
     no_improvement_count = 0
     last_best_reward = -float('inf')
 
-    # 加载预训练模型
+    # ------------------ 加载预训练模型 ------------------
     is_pretrained = False
     if pretrained_model_path and os.path.exists(pretrained_model_path):
         is_pretrained = True
@@ -236,7 +235,9 @@ def train_td3_vision(
     else:
         print("[Train] Training from scratch")
 
-    # ================= 仿真训练开始 =================
+#============================================================================================================
+    # ------------------ 仿真训练开始 ------------------
+#============================================================================================================    
     print(f"\n{'='*60}")
     print(f"  TD3 Vision Training (auto-restart every {checkpoint_interval} eps)")
     print(f"  Buffer memory: ~{agent.buffer.get_memory_mb():.0f} MB (normal) "
