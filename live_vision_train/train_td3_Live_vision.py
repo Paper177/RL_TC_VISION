@@ -101,7 +101,7 @@ def train_td3_vision(
         'gamma': 0.99,
         'Actor LR': 3e-4,
         'Critic LR': 3e-4,
-        'Buffer Capacity': 800000,
+        'Buffer Capacity': 1000000,
         'Batch Size': 256,
         'Elite Ratio': 0.3,
         'Elite Capacity': 300000,
