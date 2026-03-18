@@ -104,19 +104,22 @@
             padding: 10px;
             border-bottom: 1px solid var(--border-color);
             cursor: pointer;
-            transition: background 0.2s, border-color 0.3s;
+            border-left: 4px solid transparent;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .episode-item:hover {
             background-color: var(--hover-bg);
+            padding-left: 14px;
         }
         .episode-item.active {
             background-color: var(--active-bg);
-            border-left: 4px solid var(--primary-btn);
+            border-left-color: var(--primary-btn);
+            padding-left: 14px;
         }
         .chart-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
+            grid-template-columns: repeat(2, 1fr);
+           gap: 20px;
             margin-top: 20px;
         }
         .chart-container {
@@ -127,11 +130,86 @@
             height: 400px;
             display: flex;
             flex-direction: column;
-            transition: background-color 0.3s, border-color 0.3s;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        .chart-container:hover {
+            box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+            transform: translateY(-2px);
+            border-color: rgba(0, 123, 255, 0.3);
+        }
+        .chart-container.fullscreen {
+            position: fixed;
+            top: 40px;
+            left: 40px;
+            right: 40px;
+            bottom: 40px;
+            height: auto;
+            width: auto;
+            z-index: 1000;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+            animation: expand 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        .chart-container.fullscreen:hover {
+            transform: none; /* 全屏时不浮起 */
+        }
+        @keyframes expand {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes shrink {
+            0% { transform: scale(1); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0; }
+        }
+        .fullscreen-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 999;
+            backdrop-filter: blur(5px);
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.4s;
+        }
+        .fullscreen-overlay.active {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+        .fullscreen-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(128, 128, 128, 0.2);
+            border: none;
+            border-radius: 4px;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-color);
+            transition: background 0.2s;
+            z-index: 10;
+        }
+        .fullscreen-btn:hover {
+            background: rgba(128, 128, 128, 0.4);
         }
         .chart-canvas-wrapper {
             flex: 1;
             min-height: 0;
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        button {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        button:active {
+            transform: scale(0.95);
         }
         .y-axis-controls {
             display: flex;
@@ -179,10 +257,17 @@
             background: var(--stats-bg);
             padding: 15px;
             border-radius: 8px;
-            transition: background-color 0.3s;
+            transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .stat-card {
             text-align: center;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            background: var(--hover-bg);
         }
         .stat-value {
             font-size: 24px;
@@ -223,6 +308,9 @@
 </head>
 <body>
     <div class="container">
+        <!-- 遮罩层，用于全屏动画 -->
+        <div id="fullscreenOverlay" class="fullscreen-overlay" onclick="closeFullscreen()"></div>
+        
         <div class="sidebar">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <h3>Upload Episode Data</h3>
@@ -273,7 +361,12 @@
                 </div>
 
                 <div class="chart-grid">
-                    <div class="chart-container">
+                    <div class="chart-container" id="container_torqueChart">
+                        <button class="fullscreen-btn" onclick="toggleFullscreen('container_torqueChart')" title="全屏查看">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                        </button>
                         <div class="chart-canvas-wrapper">
                             <canvas id="torqueChart"></canvas>
                         </div>
@@ -287,7 +380,12 @@
                             <button class="reset-btn" onclick="resetYAxis('torqueChart')">重置</button>
                         </div>
                     </div>
-                    <div class="chart-container">
+                    <div class="chart-container" id="container_slipChart">
+                        <button class="fullscreen-btn" onclick="toggleFullscreen('container_slipChart')" title="全屏查看">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                        </button>
                         <div class="chart-canvas-wrapper">
                             <canvas id="slipChart"></canvas>
                         </div>
@@ -301,21 +399,12 @@
                             <button class="reset-btn" onclick="resetYAxis('slipChart')">重置</button>
                         </div>
                     </div>
-                    <div class="chart-container">
-                        <div class="chart-canvas-wrapper">
-                            <canvas id="criticLossChart"></canvas>
-                        </div>
-                        <div class="y-axis-controls" data-chart="criticLossChart">
-                            <label>Y轴:</label>
-                            <label>Min:</label>
-                            <input type="number" id="criticLossChart_yMin" step="0.1">
-                            <label>Max:</label>
-                            <input type="number" id="criticLossChart_yMax" step="0.1">
-                            <button onclick="applyYAxis('criticLossChart')">应用</button>
-                            <button class="reset-btn" onclick="resetYAxis('criticLossChart')">重置</button>
-                        </div>
-                    </div>
-                    <div class="chart-container">
+                    <div class="chart-container" id="container_speedChart">
+                        <button class="fullscreen-btn" onclick="toggleFullscreen('container_speedChart')" title="全屏查看">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                        </button>
                         <div class="chart-canvas-wrapper">
                             <canvas id="speedChart"></canvas>
                         </div>
@@ -329,7 +418,12 @@
                             <button class="reset-btn" onclick="resetYAxis('speedChart')">重置</button>
                         </div>
                     </div>
-                    <div class="chart-container">
+                    <div class="chart-container" id="container_rewardChart">
+                        <button class="fullscreen-btn" onclick="toggleFullscreen('container_rewardChart')" title="全屏查看">
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+                            </svg>
+                        </button>
                         <div class="chart-canvas-wrapper">
                             <canvas id="rewardChart"></canvas>
                         </div>
@@ -343,20 +437,6 @@
                             <button class="reset-btn" onclick="resetYAxis('rewardChart')">重置</button>
                         </div>
                     </div>
-                    <div class="chart-container">
-                        <div class="chart-canvas-wrapper">
-                            <canvas id="actorLossChart"></canvas>
-                        </div>
-                        <div class="y-axis-controls" data-chart="actorLossChart">
-                            <label>Y轴:</label>
-                            <label>Min:</label>
-                            <input type="number" id="actorLossChart_yMin" step="0.1">
-                            <label>Max:</label>
-                            <input type="number" id="actorLossChart_yMax" step="0.1">
-                            <button onclick="applyYAxis('actorLossChart')">应用</button>
-                            <button class="reset-btn" onclick="resetYAxis('actorLossChart')">重置</button>
-                        </div>
-                    </div>
                 </div>
             </div>
             <div id="placeholder" style="text-align: center; color: var(--label-color); padding-top: 100px;">
@@ -366,6 +446,80 @@
     </div>
 
     <script>
+        // Fullscreen Management
+        let currentFullscreenContainer = null;
+
+        function toggleFullscreen(containerId) {
+            const container = document.getElementById(containerId);
+            const overlay = document.getElementById('fullscreenOverlay');
+            
+            if (currentFullscreenContainer === container) {
+                closeFullscreen();
+            } else {
+                if (currentFullscreenContainer) {
+                    closeFullscreen();
+                }
+                
+                // Set to fullscreen
+                container.style.animation = 'expand 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards';
+                container.classList.add('fullscreen');
+                overlay.classList.add('active');
+                currentFullscreenContainer = container;
+                
+                // Optional: update chart icon
+                const btn = container.querySelector('.fullscreen-btn svg path');
+                btn.setAttribute('d', 'M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3');
+                
+                const chartId = container.querySelector('canvas').id;
+                // 让图表尽早适应屏幕大小
+                if (charts[chartId]) charts[chartId].resize();
+                
+                // Trigger resize after animation
+                setTimeout(() => {
+                    if (charts[chartId]) charts[chartId].resize();
+                }, 400);
+            }
+        }
+
+        function closeFullscreen() {
+            if (!currentFullscreenContainer) return;
+            
+            const container = currentFullscreenContainer;
+            const overlay = document.getElementById('fullscreenOverlay');
+            
+            // 退出动画
+            container.style.animation = 'shrink 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards';
+            overlay.classList.remove('active');
+            
+            // 动画结束后移除属性，恢复原状
+            setTimeout(() => {
+                container.classList.remove('fullscreen');
+                container.style.animation = '';
+                
+                // Restore icon
+                const btn = container.querySelector('.fullscreen-btn svg path');
+                btn.setAttribute('d', 'M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3');
+                
+                // 立即让图表缩小到约束内，防止撑破界面
+                const chartId = container.querySelector('canvas').id;
+                if (charts[chartId]) charts[chartId].resize();
+
+                // Trigger resize again to ensure perfect fit
+                setTimeout(() => {
+                    if (charts[chartId]) charts[chartId].resize();
+                }, 50);
+                
+                currentFullscreenContainer = null;
+            }, 300);
+        }
+
+        // Close fullscreen on Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && currentFullscreenContainer) {
+                closeFullscreen();
+            }
+        });
+
         // Theme Management
         function toggleTheme() {
             const isDark = document.body.classList.toggle('dark-mode');
@@ -437,10 +591,78 @@
 
         // 获取当前缩放模式（根据键盘状态）
         function getZoomMode() {
-            if (shiftPressed) return 'y';      // Shift: 缩放 Y 轴
-            if (ctrlPressed) return 'x';       // Ctrl: 缩放 X 轴
-            return 'xy';                      // 默认: 缩放 XY 轴
+            if (ctrlPressed) return 'y';       // Ctrl: 缩放 Y 轴
+            return 'x';                        // 默认: 缩放 X 轴
         }
+
+        // 同步所有图表的 X 轴缩放和平移
+        let isSyncing = false;
+        function syncZoomPan(triggeredChart) {
+            if (isSyncing) return;
+            isSyncing = true;
+            
+            const xMin = triggeredChart.scales.x.min;
+            const xMax = triggeredChart.scales.x.max;
+            
+            for (let id in charts) {
+                if (charts[id] && charts[id] !== triggeredChart) {
+                    charts[id].options.scales.x.min = xMin;
+                    charts[id].options.scales.x.max = xMax;
+                    charts[id].update('none');
+                }
+            }
+            
+            isSyncing = false;
+        }
+
+        // 同步所有图表的 Tooltip 和十字准星 (Hover状态)
+        function syncTooltips(event, activeElements, chart) {
+            if (!activeElements || activeElements.length === 0) {
+                // 如果鼠标移出当前图表的数据区域，隐藏所有其他的 tooltip
+                for (let id in charts) {
+                    if (charts[id] && charts[id] !== chart) {
+                        charts[id].tooltip.setActiveElements([], {x: 0, y: 0});
+                        charts[id].setActiveElements([]);
+                        charts[id].update('none');
+                    }
+                }
+                return;
+            }
+            
+            const dataIndex = activeElements[0].index;
+            
+            for (let id in charts) {
+                if (charts[id] && charts[id] !== chart) {
+                    // 获取对应 dataset 的 elements
+                    const targetElements = [];
+                    // 假设同步第一个可见的 dataset 即可触发 tooltip
+                    for (let d = 0; d < charts[id].data.datasets.length; d++) {
+                        if (!charts[id].isDatasetVisible(d)) continue;
+                        targetElements.push({ datasetIndex: d, index: dataIndex });
+                    }
+                    
+                    if (targetElements.length > 0) {
+                        // 触发其他图表的 tooltip 显示当前 index
+                        charts[id].tooltip.setActiveElements(targetElements, {x: event.x, y: event.y});
+                        charts[id].setActiveElements(targetElements);
+                        charts[id].update('none');
+                    }
+                }
+            }
+        }
+        
+        // 绑定 mouseleave 清除全部图表 tooltip
+        document.addEventListener('DOMContentLoaded', () => {
+            const chartIds = ['torqueChart', 'slipChart', 'speedChart', 'rewardChart'];
+            chartIds.forEach(id => {
+                const canvas = document.getElementById(id);
+                if (canvas) {
+                    canvas.addEventListener('mouseleave', () => {
+                        syncTooltips(null, [], charts[id]);
+                    });
+                }
+            });
+        });
 
         // Load folders on startup
         fetch('/api/folders')
@@ -654,6 +876,9 @@
                         mode: 'index',
                         intersect: false,
                     },
+                    onHover: function(event, activeElements, chart) {
+                        syncTooltips(event, activeElements, chart);
+                    },
                     plugins: {
                         title: {
                             display: true,
@@ -663,6 +888,7 @@
                             pan: {
                                 enabled: true,
                                 mode: function() { return getZoomMode(); },
+                                onPan: function({chart}) { syncZoomPan(chart); }
                             },
                             zoom: {
                                 wheel: {
@@ -672,6 +898,7 @@
                                     enabled: true
                                 },
                                 mode: function() { return getZoomMode(); },
+                                onZoom: function({chart}) { syncZoomPan(chart); }
                             }
                         },
                         annotation: annotations
@@ -828,6 +1055,9 @@
                         mode: 'index',
                         intersect: false,
                     },
+                    onHover: function(event, activeElements, chart) {
+                        syncTooltips(event, activeElements, chart);
+                    },
                     plugins: {
                         title: {
                             display: true,
@@ -841,6 +1071,7 @@
                             pan: {
                                 enabled: true,
                                 mode: function() { return getZoomMode(); },
+                                onPan: function({chart}) { syncZoomPan(chart); }
                             },
                             zoom: {
                                 wheel: {
@@ -850,6 +1081,7 @@
                                     enabled: true
                                 },
                                 mode: function() { return getZoomMode(); },
+                                onZoom: function({chart}) { syncZoomPan(chart); }
                             }
                         }
                     },
@@ -888,40 +1120,6 @@
                 }
             });
 
-            // Critic Loss Chart
-            if (data.training_c_loss && data.training_c_loss.length > 0) {
-                createChart(
-                    document.getElementById('criticLossChart').getContext('2d'),
-                    'Critic Loss (This Episode)',
-                    [
-                        { label: 'Critic Loss', data: data.training_c_loss, borderColor: '#ff6384', backgroundColor: 'rgba(255, 99, 132, 0.1)', fill: false }
-                    ],
-                    'Loss Value'
-                );
-            }
-
-            // Actor Loss Chart
-            if (data.training_a_loss && data.training_a_loss.length > 0) {
-                // Filter out 0.0 values (delayed updates) by replacing them with null
-                const actorLossData = data.training_a_loss.map(v => v === 0 ? null : v);
-                
-                createChart(
-                    document.getElementById('actorLossChart').getContext('2d'),
-                    'Actor Loss (This Episode)',
-                    [
-                        { 
-                            label: 'Actor Loss', 
-                            data: actorLossData, 
-                            borderColor: '#36a2eb', 
-                            backgroundColor: 'rgba(54, 162, 235, 0.1)', 
-                            fill: false,
-                            spanGaps: true 
-                        }
-                    ],
-                    'Loss Value'
-                );
-            }
-
             // 更新所有 Y 轴输入框显示
             updateAllYAxisInputs();
         }
@@ -931,9 +1129,7 @@
             torqueChart: { min: undefined, max: undefined },
             slipChart: { min: -0.05, max: 0.15 },
             speedChart: { min: undefined, max: undefined },
-            rewardChart: { min: undefined, max: undefined },
-            criticLossChart: { min: undefined, max: undefined },
-            actorLossChart: { min: undefined, max: undefined }
+            rewardChart: { min: undefined, max: undefined }
         };
 
         // 用户自定义的 Y 轴范围（切换 episode 时保持）
@@ -1004,7 +1200,7 @@
 
         // 更新所有图表的 Y 轴输入框
         function updateAllYAxisInputs() {
-            ['torqueChart', 'slipChart', 'speedChart', 'rewardChart', 'criticLossChart', 'actorLossChart'].forEach(updateYAxisInputs);
+            ['torqueChart', 'slipChart', 'speedChart', 'rewardChart'].forEach(updateYAxisInputs);
         }
     </script>
 </body>

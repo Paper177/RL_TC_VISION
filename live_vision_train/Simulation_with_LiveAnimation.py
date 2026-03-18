@@ -23,8 +23,6 @@ class VehicleSimulationWithLiveAnimation:
             return False
 
     def get_char_pointer(self, python_string):
-        # python version is greater or equal to 3.0 then we need to define the encoding when converting a string to
-        # bytes. Once that is done we can convert the the python string to a char*.
         if sys.version_info >= (3, 0):
             char_pointer = ctypes.c_char_p(bytes(python_string, 'UTF-8'))
         else:

@@ -81,6 +81,10 @@ class LiveCarsimEnv:
         self.action_dim = 4
         self.img_shape = (3, self.IMG_HEIGHT, self.IMG_WIDTH)
 
+        # 平滑度评估窗口大小 (用于计算多步扭矩变化)
+        self.smooth_window_size = 10
+        self.torque_history = []
+
         self._init_vs()
 
     # ================================================================
@@ -128,6 +132,7 @@ class LiveCarsimEnv:
         self.current_step = 0
         self.status = 0
         self.last_torque = np.zeros(4)
+        self.torque_history = []  # 重置平滑度历史缓冲区
 
         self.import_array = [0.0, 0.0, 0.0, 0.0]
         self.export_array = [0.0] * n_export
@@ -162,6 +167,11 @@ class LiveCarsimEnv:
 
         physics = self._parse_observation(self.export_array)
         norm_physics = self._normalize_state(physics)
+
+        # 更新扭矩历史缓冲区 (用于平滑度评估)
+        self.torque_history.append(target_torque.copy())
+        if len(self.torque_history) > self.smooth_window_size:
+            self.torque_history.pop(0)
 
         reward, r_details = self._calculate_reward(
             physics, target_torque, self.last_torque)
@@ -333,15 +343,28 @@ class LiveCarsimEnv:
         r_slip = 0.0
         if vx > 3.0:
             for s in slips:
-                r_slip += max(0.0, s - self.target_slip_ratio)
-        r_slip = w['w_slip'] * r_slip
+                r_slip += (max(0.0, s - self.target_slip_ratio))**2
+        r_slip = w['w_slip'] * r_slip *2
 
         r_energy = w['w_energy'] * np.mean(np.abs(current_torque / self.max_torque))
+        
         r_consistency = w['w_consistency'] * (
             abs(current_torque[0] - current_torque[1]) +
             abs(current_torque[2] - current_torque[3])) / self.max_torque
-        r_smooth = w['w_smooth'] * np.mean(
-            ((current_torque - last_torque) / self.max_torque) ** 2)
+
+        # 平滑度奖励：评估窗口内的扭矩变化方差
+        if len(self.torque_history) >= 3:
+            # 计算窗口内扭矩变化的方差 (衡量平滑度)
+            torque_array = np.array(self.torque_history)  # shape: (N, 4)
+            # 计算每列(每个轮子)的方差，然后求平均
+            torque_variance = np.mean(np.var(torque_array, axis=0))
+            # 归一化到 [0, 1] 范围 (假设合理最大方差为 0.25 * max_torque^2)
+            normalized_variance = torque_variance / (0.25 * self.max_torque ** 2)
+            # 限制范围并计算惩罚 (方差越大越不平滑)
+            r_smooth = w['w_smooth'] * min(normalized_variance, 1.0)
+        else:
+            # 历史不足时退化为单步变化率
+            r_smooth = w['w_smooth'] * np.mean(((current_torque - last_torque) / self.max_torque) ** 2)
 
         r_yaw = 0.0
         if abs(yaw_rate) > 0.01:
@@ -356,7 +379,7 @@ class LiveCarsimEnv:
         details = {
             "R_Spd": r_speed, "R_Acc": r_accel, "R_Slp": r_slip,
             "R_Eng": r_energy, "R_Cns": r_consistency,
-            "R_Yaw": r_yaw, "R_Beta": r_beta
+            "R_Yaw": r_yaw, "R_Beta": r_beta, "R_Smooth": r_smooth
         }
         return total, details
 

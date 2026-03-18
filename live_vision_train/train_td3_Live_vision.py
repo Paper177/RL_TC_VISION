@@ -90,8 +90,8 @@ def train_td3_vision(
         'w_energy': 0.015,
         'w_consistency': -0.05,
         'w_beta': -0.02,
-        'w_slip': -0.2,
-        'w_smooth': -0.00,
+        'w_slip': -0.25,
+        'w_smooth': -0.1,
         'w_yaw': -2.0,
     }
     #模型超参数
@@ -102,9 +102,9 @@ def train_td3_vision(
         'gamma': 0.99,
         'Actor LR': 3e-4,
         'Critic LR': 3e-4,
-        'Buffer Capacity': 1000000,
+        'Buffer Capacity': 500000,
         'Batch Size': 256,
-        'Elite Ratio': 0.3,
+        'Elite Ratio': 0.15,
         'Elite Capacity': 300000,
         'Noise Scale': 0.15,
         'Min Noise': 0.02,
@@ -272,8 +272,10 @@ def train_td3_vision(
                 img = obs['image']
 
                 # Warmup: 随机探索填充 buffer
-                if episode < start_episode + warmup_episodes:
-                    action = np.random.uniform(0.0, 1.0, size=env.get_action_dim())
+                if episode < start_episode + warmup_episodes-3:
+                    action = np.random.uniform(0.3, 0.7, size=env.get_action_dim())
+                elif episode < start_episode + warmup_episodes:
+                    action = agent.select_action(phys, img, noise_scale=noise_scale)
                 else:
                     action = agent.select_action(phys, img, noise_scale=noise_scale)
 
@@ -329,7 +331,7 @@ def train_td3_vision(
             print(f"\033[93m[{ts}] EP {episode} | Reward: {episode_reward:.2f} "
                   f"| Speed: {final_speed:.1f} km/h | Buffer: {len(agent.buffer)}\033[0m")
             print(f"\033[93m{'='*60}\033[0m")
-
+            save_episode_data(episode, hist, episode_reward, final_info, log_path)
             # ---- 训练 ----
             avg_c_loss, avg_a_loss = 0.0, 0.0
             if episode < start_episode + warmup_episodes:
@@ -352,22 +354,22 @@ def train_td3_vision(
                     c_loss, a_loss, c_grad, a_grad = agent.train_step()
                     sum_c_loss += c_loss
                     # 记录每个 step 的 loss
-                    hist['training_c_loss'].append(c_loss)
-                    hist['training_a_loss'].append(a_loss)
+                    #hist['training_c_loss'].append(c_loss)
+                    #hist['training_a_loss'].append(a_loss)
                     if a_loss != 0.0:
                         sum_a_loss += a_loss
                         actor_update_count += 1
                     pbar.set_postfix({
-                        'C': f'{c_loss:.4f}',
-                        'A': f'{a_loss:.4f}',
-                        'A_avg': f'{sum_a_loss / max(1, actor_update_count):.4f}'
+                        #'C': f'{c_loss:.4f}',
+                        #'A': f'{a_loss:.4f}',
+                        #'A_avg': f'{sum_a_loss / max(1, actor_update_count):.4f}'
                     })
 
                 avg_c_loss = sum_c_loss / train_steps
                 avg_a_loss = sum_a_loss / max(1, actor_update_count)
 
             # ---- Logging ----
-            save_episode_data(episode, hist, episode_reward, final_info, log_path)
+            
 
             writer.add_scalar('Loss/Critic', avg_c_loss, episode)
             writer.add_scalar('Loss/Actor', avg_a_loss, episode)
@@ -376,19 +378,20 @@ def train_td3_vision(
             writer.add_scalar('Train/Final_Speed_kmh', final_speed, episode)
             writer.add_scalar('Train/Buffer_Size', len(agent.buffer), episode)
 
+            # ---- 更新最佳 reward (无论是否是 elite 都要更新) ----
+            if episode_reward > best_episode_reward:
+                best_episode_reward = episode_reward
+                model_name = (f"TD3_Vision_{current_time}"
+                              f"_{episode}_{best_episode_reward:.0f}.pt")
+                agent.save_model(os.path.join(best_model_dir, model_name))
+                print(f"[{ts}] [New Best] Reward: {episode_reward:.1f}")
+
             # ---- Elite 判定 ----
             if episode_reward > best_episode_reward * 0.9 and episode_reward >= 0:
                 writer.add_scalar('Train/Is_Elite', 1, episode)
                 print(f"[{ts}] [Elite] Reward: {episode_reward:.1f}")
                 for trans in episode_memory:
                     agent.push_elite(*trans)
-
-                if episode_reward > best_episode_reward:
-                    best_episode_reward = episode_reward
-                    model_name = (f"TD3_Vision_{current_time}"
-                                  f"_{episode}_{best_episode_reward:.0f}.pt")
-                    agent.save_model(os.path.join(best_model_dir, model_name))
-                    print(f"[{ts}] [New Best] Reward: {episode_reward:.1f}")
             else:
                 writer.add_scalar('Train/Is_Elite', 0, episode)
                 noise_scale = max(min_noise, noise_scale * noise_decay)
@@ -420,7 +423,7 @@ def train_td3_vision(
             if episodes_completed >= checkpoint_interval:
                 ckpt_path = os.path.join(
                     checkpoint_dir,
-                    f"checkpoint_{episode}_{episode_reward:.0f}.pt")
+                    f"checkpoint_{episode}_{best_episode_reward:.0f}.pt")
                 agent.save_model(ckpt_path)
 
                 buffer_path = ckpt_path.replace('.pt', '_buffer.pkl')
@@ -439,9 +442,10 @@ def train_td3_vision(
 
     except KeyboardInterrupt:
         print("\n===== Training interrupted =====")
+        # 使用当前最佳 reward 保存
         ckpt_path = os.path.join(
             checkpoint_dir,
-            f"checkpoint_KeyboardInterrupt_{episode}_{episode_reward:.0f}.pt")
+            f"checkpoint_KeyboardInterrupt_{episode}_{best_episode_reward:.0f}.pt")
         agent.save_model(ckpt_path)
 
         buffer_path = ckpt_path.replace('.pt', '_buffer.pkl')

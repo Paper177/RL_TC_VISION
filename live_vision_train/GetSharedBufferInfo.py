@@ -20,9 +20,9 @@ import platform
 import sys
 
 
-bufferName = 'EBS' # this can be provided when executing Python code.
+bufferName = 'EBS'
 
-path_to_sb_dll = r'E:\CarSim2024.1_Prog\Database\RL_VISION\RL_TC_VISION\vs_sb_64.dll'  # this file needs to present in the directory.
+path_to_sb_dll = r'E:\CarSim2024.1_Prog\Database\RL_VISION\RL_TC_VISION\vs_sb_64.dll'
 sb_dll = cdll.LoadLibrary(path_to_sb_dll)
 
 class VsSharedBuffer(Structure):
